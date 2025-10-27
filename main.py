@@ -693,7 +693,7 @@ async def on_ready():
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="le serveur 🌙"
+            name="Luna Networks 🌙"
         ),
         status=discord.Status.online
     )
@@ -737,3 +737,4 @@ else:
     except Exception as e:
 
         print(f"❌ Erreur de démarrage: {e}")
+
