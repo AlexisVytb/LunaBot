@@ -735,4 +735,5 @@ else:
     try:
         bot.run(TOKEN)
     except Exception as e:
+
         print(f"❌ Erreur de démarrage: {e}")
