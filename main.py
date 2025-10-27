@@ -3,6 +3,9 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 import asyncio
+import os
+import threading
+from flask import Flask
 
 intents = discord.Intents.default()
 intents.members = True
@@ -22,9 +25,88 @@ CONFIG = {
     "ANNOUNCE_ROLE_ID": 1409894288925397135,
 }
 
+# Structure des équipes (stockage en mémoire)
+TEAMS = {
+    'F': {
+        'name': 'Fondateur',
+        'description': 'Fonde le serveur, finance le serveur !',
+        'members': []
+    },
+    'G': {
+        'name': 'Gérant',
+        'description': 'Il gère tout ce qui est externe au serveur',
+        'members': []
+    },
+    'R': {
+        'name': 'Équipe Réponsable',
+        'description': "Il s'occupe de tout le staff en général et du serveur",
+        'members': []
+    },
+    'C': {
+        'name': 'Community Manager',
+        'description': 'Il gère la communication du serveur',
+        'members': []
+    },
+    'A': {
+        'name': 'Administrateur',
+        'description': 'Il gère tout ce qui est nouveauté, staff, etc.',
+        'members': []
+    },
+    'E': {
+        'name': 'Équipe Création',
+        'description': 'Il contribue au développement du serveur',
+        'members': []
+    },
+    'S': {
+        'name': 'Super Modérateur',
+        'description': "Il aide l'équipe réponsable dans leur travail",
+        'members': []
+    },
+    'M': {
+        'name': 'Équipe Modérations',
+        'description': "Il modère le tchat, s'occupe de sanctionner si nécessaire",
+        'members': []
+    },
+    'GU': {
+        'name': 'Guide',
+        'description': 'Il guide les joueurs en répondant aux questions',
+        'members': []
+    },
+    'B': {
+        'name': 'Builders',
+        'description': 'Il contribue au build du serveur',
+        'members': []
+    }
+}
+
 warnings_db = {}
 mutes_db = {}
 tickets_db = {}
+team_messages = {}
+
+# Créer l'embed de l'équipe
+def create_team_embed():
+    embed = discord.Embed(
+        title='📋 Composition de l\'équipe',
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    
+    for key, team in TEAMS.items():
+        field_value = f"-# {team['description']}\n"
+        
+        if team['members']:
+            field_value += '\n'.join([f"- <@{member_id}>" for member_id in team['members']])
+        else:
+            field_value += '*Aucun membre*'
+        
+        embed.add_field(
+            name=f"{key} - {team['name']}",
+            value=field_value,
+            inline=False
+        )
+    
+    return embed
 
 @bot.event
 async def on_member_join(member):
@@ -41,6 +123,118 @@ async def on_member_join(member):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"ID: {member.id}")
         await channel.send(embed=embed)
+
+# ========== COMMANDES TEAM ==========
+
+@bot.tree.command(name='teammessage', description='Affiche l\'embed de l\'équipe')
+@app_commands.checks.has_permissions(ban_members=True)
+async def teammessage(interaction: discord.Interaction):
+    embed = create_team_embed()
+    await interaction.response.send_message(embed=embed)
+    
+    message = await interaction.original_response()
+    team_messages[interaction.guild_id] = {
+        'channel_id': interaction.channel_id,
+        'message_id': message.id
+    }
+
+team_group = app_commands.Group(name='team', description='Gérer les membres de l\'équipe')
+
+@team_group.command(name='add', description='Ajouter un membre à une équipe')
+@app_commands.describe(
+    joueur='Le joueur à ajouter',
+    team='L\'équipe'
+)
+@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.choices(team=[
+    app_commands.Choice(name='F - Fondateur', value='F'),
+    app_commands.Choice(name='G - Gérant', value='G'),
+    app_commands.Choice(name='R - Équipe Réponsable', value='R'),
+    app_commands.Choice(name='C - Community Manager', value='C'),
+    app_commands.Choice(name='A - Administrateur', value='A'),
+    app_commands.Choice(name='E - Équipe Création', value='E'),
+    app_commands.Choice(name='S - Super Modérateur', value='S'),
+    app_commands.Choice(name='M - Équipe Modérations', value='M'),
+    app_commands.Choice(name='GU - Guide', value='GU'),
+    app_commands.Choice(name='B - Builders', value='B')
+])
+async def team_add(interaction: discord.Interaction, joueur: discord.Member, team: str):
+    if team not in TEAMS:
+        await interaction.response.send_message('❌ Équipe invalide !', ephemeral=True)
+        return
+    
+    if joueur.id in TEAMS[team]['members']:
+        await interaction.response.send_message(
+            f"❌ {joueur.mention} est déjà dans l'équipe {TEAMS[team]['name']} !",
+            ephemeral=True
+        )
+        return
+    
+    TEAMS[team]['members'].append(joueur.id)
+    
+    await interaction.response.send_message(
+        f"✅ {joueur.mention} a été ajouté à l'équipe {TEAMS[team]['name']} !",
+        ephemeral=True
+    )
+    
+    if interaction.guild_id in team_messages:
+        try:
+            channel = bot.get_channel(team_messages[interaction.guild_id]['channel_id'])
+            message = await channel.fetch_message(team_messages[interaction.guild_id]['message_id'])
+            new_embed = create_team_embed()
+            await message.edit(embed=new_embed)
+        except Exception as e:
+            print(f'Erreur lors de la mise à jour du message: {e}')
+
+@team_group.command(name='remove', description='Retirer un membre d\'une équipe')
+@app_commands.describe(
+    joueur='Le joueur à retirer',
+    team='L\'équipe'
+)
+@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.choices(team=[
+    app_commands.Choice(name='F - Fondateur', value='F'),
+    app_commands.Choice(name='G - Gérant', value='G'),
+    app_commands.Choice(name='R - Équipe Réponsable', value='R'),
+    app_commands.Choice(name='C - Community Manager', value='C'),
+    app_commands.Choice(name='A - Administrateur', value='A'),
+    app_commands.Choice(name='E - Équipe Création', value='E'),
+    app_commands.Choice(name='S - Super Modérateur', value='S'),
+    app_commands.Choice(name='M - Équipe Modérations', value='M'),
+    app_commands.Choice(name='GU - Guide', value='GU'),
+    app_commands.Choice(name='B - Builders', value='B')
+])
+async def team_remove(interaction: discord.Interaction, joueur: discord.Member, team: str):
+    if team not in TEAMS:
+        await interaction.response.send_message('❌ Équipe invalide !', ephemeral=True)
+        return
+    
+    if joueur.id not in TEAMS[team]['members']:
+        await interaction.response.send_message(
+            f"❌ {joueur.mention} n'est pas dans l'équipe {TEAMS[team]['name']} !",
+            ephemeral=True
+        )
+        return
+    
+    TEAMS[team]['members'].remove(joueur.id)
+    
+    await interaction.response.send_message(
+        f"✅ {joueur.mention} a été retiré de l'équipe {TEAMS[team]['name']} !",
+        ephemeral=True
+    )
+    
+    if interaction.guild_id in team_messages:
+        try:
+            channel = bot.get_channel(team_messages[interaction.guild_id]['channel_id'])
+            message = await channel.fetch_message(team_messages[interaction.guild_id]['message_id'])
+            new_embed = create_team_embed()
+            await message.edit(embed=new_embed)
+        except Exception as e:
+            print(f'Erreur lors de la mise à jour du message: {e}')
+
+bot.tree.add_command(team_group)
+
+# ========== COMMANDES MODERATION ==========
 
 @bot.tree.command(name="warn", description="Avertir un membre")
 @app_commands.describe(membre="Le membre à avertir", raison="La raison de l'avertissement")
@@ -188,6 +382,87 @@ async def unmute(interaction: discord.Interaction, membre: discord.Member):
         await interaction.response.send_message(embed=embed)
     except Exception as e:
         await interaction.response.send_message(f"❌ Erreur: {str(e)}", ephemeral=True)
+
+@bot.tree.command(name="kick", description="Expulser un membre du serveur")
+@app_commands.describe(membre="Le membre à expulser", raison="La raison de l'expulsion")
+async def kick(interaction: discord.Interaction, membre: discord.Member, raison: str = "Aucune raison fournie"):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
+    if membre.top_role >= interaction.user.top_role:
+        await interaction.response.send_message("❌ Tu ne peux pas expulser ce membre (rôle supérieur ou égal).", ephemeral=True)
+        return
+    
+    try:
+        await membre.kick(reason=raison)
+        
+        embed = discord.Embed(
+            title="👢 Membre Expulsé",
+            description=f"{membre.mention} a été expulsé du serveur.",
+            color=discord.Color.orange(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Raison", value=raison, inline=False)
+        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=True)
+        embed.set_footer(text=f"ID: {membre.id}")
+        
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Erreur: {str(e)}", ephemeral=True)
+
+@bot.tree.command(name="ban", description="Bannir un membre du serveur")
+@app_commands.describe(membre="Le membre à bannir", raison="La raison du bannissement")
+async def ban(interaction: discord.Interaction, membre: discord.Member, raison: str = "Aucune raison fournie"):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
+    if membre.top_role >= interaction.user.top_role:
+        await interaction.response.send_message("❌ Tu ne peux pas bannir ce membre (rôle supérieur ou égal).", ephemeral=True)
+        return
+    
+    try:
+        await membre.ban(reason=raison, delete_message_days=1)
+        
+        embed = discord.Embed(
+            title="🔨 Membre Banni",
+            description=f"{membre.mention} a été banni du serveur.",
+            color=discord.Color.dark_red(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Raison", value=raison, inline=False)
+        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=True)
+        embed.set_footer(text=f"ID: {membre.id}")
+        
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Erreur: {str(e)}", ephemeral=True)
+
+@bot.tree.command(name="unban", description="Débannir un utilisateur")
+@app_commands.describe(user_id="L'ID de l'utilisateur à débannir")
+async def unban(interaction: discord.Interaction, user_id: str):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
+    try:
+        user = await bot.fetch_user(int(user_id))
+        await interaction.guild.unban(user)
+        
+        embed = discord.Embed(
+            title="✅ Membre Débanni",
+            description=f"{user.mention} ({user.name}) a été débanni.",
+            color=discord.Color.green(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=True)
+        
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Erreur: {str(e)}", ephemeral=True)
+
+# ========== SYSTÈME DE TICKETS ==========
 
 class TicketModal(discord.ui.Modal, title="Créer un Ticket"):
     pseudo_ig = discord.ui.TextInput(
@@ -369,372 +644,45 @@ async def ticket_panel(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=view)
     await interaction.response.send_message("✅ Panel de tickets créé !", ephemeral=True)
 
-@bot.tree.command(name="rename", description="Renommer un ticket")
-@app_commands.describe(nom="Le nouveau nom du ticket")
-async def rename_ticket(interaction: discord.Interaction, nom: str):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
     if not interaction.channel.name.startswith("ticket-"):
         await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
         return
-    
-    clean_name = "".join(c for c in nom if c.isalnum() or c in ('-', '_')).lower()
-    await interaction.channel.edit(name=f"ticket-{clean_name}")
-    await interaction.response.send_message(f"✅ Ticket renommé en **ticket-{clean_name}**")
 
-@bot.tree.command(name="add", description="Ajouter un membre au ticket")
-@app_commands.describe(membre="Le membre à ajouter")
-async def add_to_ticket(interaction: discord.Interaction, membre: discord.Member):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
-    if not interaction.channel.name.startswith("ticket-"):
-        await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
-        return
-    
-    await interaction.channel.set_permissions(membre, read_messages=True, send_messages=True)
-    
-    embed = discord.Embed(
-        description=f"✅ {membre.mention} a été ajouté au ticket par {interaction.user.mention}",
-        color=discord.Color.green()
-    )
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="remove", description="Retirer un membre du ticket")
-@app_commands.describe(membre="Le membre à retirer")
-async def remove_from_ticket(interaction: discord.Interaction, membre: discord.Member):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
-    if not interaction.channel.name.startswith("ticket-"):
-        await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
-        return
-    
-    await interaction.channel.set_permissions(membre, overwrite=None)
-    
-    embed = discord.Embed(
-        description=f"✅ {membre.mention} a été retiré du ticket par {interaction.user.mention}",
-        color=discord.Color.orange()
-    )
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="reserv-ticket", description="Réserver le ticket aux opérateurs")
-async def reserv_ticket(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.ban_members:
-        await interaction.response.send_message("❌ Seuls ceux qui ont la permission de ban peuvent utiliser cette commande.", ephemeral=True)
-        return
-    
-    if not interaction.channel.name.startswith("ticket-"):
-        await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
-        return
-    
-    guild = interaction.guild
-    operator_role = guild.get_role(CONFIG["OPERATOR_ROLE_ID"])
-    
-    channel_id = str(interaction.channel.id)
-    ticket_data = tickets_db.get(channel_id)
-    
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        operator_role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-    }
-    
-    if ticket_data:
-        creator = guild.get_member(int(ticket_data["user_id"]))
-        if creator:
-            overwrites[creator] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-    
-    await interaction.channel.edit(overwrites=overwrites)
-    
-    embed = discord.Embed(
-        title="🔒 Ticket Réservé",
-        description=f"Ce ticket a été réservé aux Opérateurs par {interaction.user.mention}",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="kick", description="Expulser un membre du serveur")
-@app_commands.describe(membre="Le membre à expulser", raison="La raison de l'expulsion")
-async def kick(interaction: discord.Interaction, membre: discord.Member, raison: str = "Aucune raison fournie"):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
-    if membre.top_role >= interaction.user.top_role:
-        await interaction.response.send_message("❌ Tu ne peux pas expulser ce membre (rôle supérieur ou égal).", ephemeral=True)
-        return
-    
     try:
-        await membre.kick(reason=raison)
-        
-        embed = discord.Embed(
-            title="👢 Membre Expulsé",
-            description=f"{membre.mention} a été expulsé du serveur.",
-            color=discord.Color.orange(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="Raison", value=raison, inline=False)
-        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=True)
-        embed.set_footer(text=f"ID: {membre.id}")
-        
-        await interaction.response.send_message(embed=embed)
+        await interaction.channel.edit(name=f"ticket-{nom}")
+        await interaction.response.send_message(f"✅ Ticket renommé en **ticket-{nom}**", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ Erreur: {str(e)}", ephemeral=True)
+        await interaction.response.send_message(f"❌ Erreur lors du renommage : {e}", ephemeral=True)
 
-@bot.tree.command(name="ban", description="Bannir un membre du serveur")
-@app_commands.describe(membre="Le membre à bannir", raison="La raison du bannissement")
-async def ban(interaction: discord.Interaction, membre: discord.Member, raison: str = "Aucune raison fournie"):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
-    if membre.top_role >= interaction.user.top_role:
-        await interaction.response.send_message("❌ Tu ne peux pas bannir ce membre (rôle supérieur ou égal).", ephemeral=True)
-        return
-    
-    try:
-        await membre.ban(reason=raison, delete_message_days=1)
-        
-        embed = discord.Embed(
-            title="🔨 Membre Banni",
-            description=f"{membre.mention} a été banni du serveur.",
-            color=discord.Color.dark_red(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="Raison", value=raison, inline=False)
-        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=True)
-        embed.set_footer(text=f"ID: {membre.id}")
-        
-        await interaction.response.send_message(embed=embed)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Erreur: {str(e)}", ephemeral=True)
+# ========== KEEP ALIVE SERVEUR FLASK (pour Render) ==========
 
-@bot.tree.command(name="unban", description="Débannir un utilisateur")
-@app_commands.describe(user_id="L'ID de l'utilisateur à débannir")
-async def unban(interaction: discord.Interaction, user_id: str):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
-    try:
-        user = await bot.fetch_user(int(user_id))
-        await interaction.guild.unban(user)
-        
-        embed = discord.Embed(
-            title="✅ Membre Débanni",
-            description=f"{user.mention} ({user.name}) a été débanni.",
-            color=discord.Color.green(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=True)
-        
-        await interaction.response.send_message(embed=embed)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Erreur: {str(e)}", ephemeral=True)
-
-@bot.tree.command(name="rank", description="Promouvoir un joueur à un grade")
-@app_commands.describe(joueur="Le joueur à promouvoir", grade="Le nom du grade")
-async def rank(interaction: discord.Interaction, joueur: discord.Member, grade: str):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
-    announce_role = interaction.guild.get_role(CONFIG["ANNOUNCE_ROLE_ID"])
-    
-    embed = discord.Embed(
-        title="⭐ Nouvelle Promotion !",
-        description=f"Félicitations à {joueur.mention} qui vient d'être promu !",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    embed.add_field(name="👤 Joueur", value=joueur.mention, inline=True)
-    embed.add_field(name="🎖️ Nouveau Grade", value=grade, inline=True)
-    embed.add_field(name="👨‍💼 Promu par", value=interaction.user.mention, inline=True)
-    embed.set_thumbnail(url=joueur.display_avatar.url)
-    embed.set_footer(text="Bonne continuation dans tes nouvelles fonctions !")
-    
-    await interaction.response.send_message(
-        content=f"{announce_role.mention}",
-        embed=embed
-    )
-
-@bot.tree.command(name="derank", description="Rétrograder un joueur")
-@app_commands.describe(joueur="Le joueur à rétrograder")
-async def derank(interaction: discord.Interaction, joueur: discord.Member):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
-        return
-    
-    announce_role = interaction.guild.get_role(CONFIG["ANNOUNCE_ROLE_ID"])
-    
-    embed = discord.Embed(
-        title="📉 Rétrogradation",
-        description=f"{joueur.mention} a été rétrogradé.",
-        color=discord.Color.red(),
-        timestamp=datetime.now()
-    )
-    embed.add_field(name="👤 Joueur", value=joueur.mention, inline=True)
-    embed.add_field(name="👨‍💼 Rétrogradé par", value=interaction.user.mention, inline=True)
-    embed.set_thumbnail(url=joueur.display_avatar.url)
-    
-    await interaction.response.send_message(
-        content=f"{announce_role.mention}",
-        embed=embed
-    )
-
-@bot.tree.command(name="botinfo", description="Informations sur le bot")
-async def botinfo(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🌙 LunaBot - Informations",
-        description="Bot de modération et gestion de tickets",
-        color=discord.Color.purple(),
-        timestamp=datetime.now()
-    )
-    embed.add_field(name="👥 Serveurs", value=str(len(bot.guilds)), inline=True)
-    embed.add_field(name="📊 Membres", value=str(len(bot.users)), inline=True)
-    embed.add_field(name="🏓 Latence", value=f"{round(bot.latency * 1000)}ms", inline=True)
-    embed.add_field(name="⚠️ Warns actifs", value=str(len(warnings_db)), inline=True)
-    embed.add_field(name="🎫 Tickets ouverts", value=str(len(tickets_db)), inline=True)
-    embed.set_footer(text="Développé pour ton serveur")
-    
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="help", description="Liste des commandes disponibles")
-async def help_command(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="📚 Commandes de LunaBot",
-        color=discord.Color.blue()
-    )
-    
-    embed.add_field(
-        name="🛡️ Modération",
-        value="`/warn` - Avertir un membre\n"
-              "`/warnings` - Voir les warns\n"
-              "`/clearwarns` - Effacer les warns\n"
-              "`/mute` - Rendre muet\n"
-              "`/unmute` - Retirer le mute\n"
-              "`/kick` - Expulser un membre\n"
-              "`/ban` - Bannir un membre\n"
-              "`/unban` - Débannir un utilisateur",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="🎫 Tickets",
-        value="`/ticket-panel` - Créer le panel\n"
-              "`/rename` - Renommer le ticket\n"
-              "`/add` - Ajouter un membre\n"
-              "`/remove` - Retirer un membre\n"
-              "`/reserv-ticket` - Réserver aux ops",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="🎖️ Grades",
-        value="`/rank` - Promouvoir un joueur\n"
-              "`/derank` - Rétrograder un joueur",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="ℹ️ Informations",
-        value="`/botinfo` - Infos sur le bot\n"
-              "`/help` - Cette commande\n"
-              "`/ping` - Latence du bot",
-        inline=False
-    )
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="ping", description="Vérifier la latence du bot")
-async def ping(interaction: discord.Interaction):
-    latency = round(bot.latency * 1000)
-    
-    if latency < 100:
-        color = discord.Color.green()
-        status = "Excellent"
-    elif latency < 200:
-        color = discord.Color.orange()
-        status = "Correct"
-    else:
-        color = discord.Color.red()
-        status = "Lent"
-    
-    embed = discord.Embed(
-        title="🏓 Pong !",
-        description=f"**Latence:** {latency}ms\n**Status:** {status}",
-        color=color
-    )
-    await interaction.response.send_message(embed=embed)
-
-@bot.event
-async def on_ready():
-    print("=" * 50)
-    print(f"✅ {bot.user.name} est connecté !")
-    print(f"📊 ID: {bot.user.id}")
-    print(f"🌐 Serveurs: {len(bot.guilds)}")
-    print(f"👥 Utilisateurs: {len(bot.users)}")
-    print("=" * 50)
-    
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ {len(synced)} commandes synchronisées")
-    except Exception as e:
-        print(f"❌ Erreur de synchronisation: {e}")
-    
-    bot.add_view(TicketView())
-    bot.add_view(TicketButton())
-    
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,
-            name="Luna Networks 🌙"
-        ),
-        status=discord.Status.online
-    )
-    print("✅ Bot prêt à l'utilisation !")
-    print("=" * 50)
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        return
-    print(f"❌ Erreur: {error}")
-
-
-from flask import Flask
-import threading
-import os
-
-
-app = Flask('')
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "✅ LunaBot est en ligne !"
 
-def run():
+def run_web():
     app.run(host='0.0.0.0', port=8080)
 
+def keep_alive():
+    thread = threading.Thread(target=run_web)
+    thread.start()
 
-threading.Thread(target=run).start()
+# ========== ÉVÈNEMENT DE DÉMARRAGE ==========
 
-print("🚀 Démarrage de LunaBot...")
-
-TOKEN = os.getenv("DISCORD_TOKEN")  
-
-if not TOKEN:
-    print("❌ ERREUR : Token Discord non trouvé !")
-    print("⚠️  Ajoute une variable d'environnement DISCORD_TOKEN sur Render.com")
-else:
+@bot.event
+async def on_ready():
+    print(f"✅ Connecté en tant que {bot.user}")
     try:
-        bot.run(TOKEN)
+        synced = await bot.tree.sync(guild=discord.Object(id=CONFIG["GUILD_ID"]))
+        print(f"🔁 {len(synced)} commandes synchronisées avec succès.")
     except Exception as e:
+        print(f"❌ Erreur lors de la synchronisation des commandes : {e}")
 
-        print(f"❌ Erreur de démarrage: {e}")
+# ========== LANCEMENT DU BOT ==========
 
+if __name__ == "__main__":
+    keep_alive()  # Garde le bot actif sur Render
+    TOKEN = os.getenv("DISCORD_TOKEN")  # Ton token doit être dans les variables d'environnement Render
+    bot.run(TOKEN)
