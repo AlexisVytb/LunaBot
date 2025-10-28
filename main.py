@@ -644,45 +644,312 @@ async def ticket_panel(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=view)
     await interaction.response.send_message("✅ Panel de tickets créé !", ephemeral=True)
 
+@bot.tree.command(name="rename", description="Renommer un ticket")
+@app_commands.describe(nom="Le nouveau nom du ticket")
+async def rename_ticket(interaction: discord.Interaction, nom: str):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
     if not interaction.channel.name.startswith("ticket-"):
         await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
         return
+    
+    clean_name = "".join(c for c in nom if c.isalnum() or c in ('-', '_')).lower()
+    await interaction.channel.edit(name=f"ticket-{clean_name}")
+    await interaction.response.send_message(f"✅ Ticket renommé en **ticket-{clean_name}**")
 
+@bot.tree.command(name="add", description="Ajouter un membre au ticket")
+@app_commands.describe(membre="Le membre à ajouter")
+async def add_to_ticket(interaction: discord.Interaction, membre: discord.Member):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
+    if not interaction.channel.name.startswith("ticket-"):
+        await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
+        return
+    
+    await interaction.channel.set_permissions(membre, read_messages=True, send_messages=True)
+    
+    embed = discord.Embed(
+        description=f"✅ {membre.mention} a été ajouté au ticket par {interaction.user.mention}",
+        color=discord.Color.green()
+    )
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="remove", description="Retirer un membre du ticket")
+@app_commands.describe(membre="Le membre à retirer")
+async def remove_from_ticket(interaction: discord.Interaction, membre: discord.Member):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
+    if not interaction.channel.name.startswith("ticket-"):
+        await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
+        return
+    
+    await interaction.channel.set_permissions(membre, overwrite=None)
+    
+    embed = discord.Embed(
+        description=f"✅ {membre.mention} a été retiré du ticket par {interaction.user.mention}",
+        color=discord.Color.orange()
+    )
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="reserv-ticket", description="Réserver le ticket aux opérateurs")
+async def reserv_ticket(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.ban_members:
+        await interaction.response.send_message("❌ Seuls ceux qui ont la permission de ban peuvent utiliser cette commande.", ephemeral=True)
+        return
+    
+    if not interaction.channel.name.startswith("ticket-"):
+        await interaction.response.send_message("❌ Cette commande ne peut être utilisée que dans un ticket.", ephemeral=True)
+        return
+    
+    guild = interaction.guild
+    operator_role = guild.get_role(CONFIG["OPERATOR_ROLE_ID"])
+    
+    channel_id = str(interaction.channel.id)
+    ticket_data = tickets_db.get(channel_id)
+    
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        operator_role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+    }
+    
+    if ticket_data:
+        creator = guild.get_member(int(ticket_data["user_id"]))
+        if creator:
+            overwrites[creator] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    
+    await interaction.channel.edit(overwrites=overwrites)
+    
+    embed = discord.Embed(
+        title="🔒 Ticket Réservé",
+        description=f"Ce ticket a été réservé aux Opérateurs par {interaction.user.mention}",
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    await interaction.response.send_message(embed=embed)
+
+# ========== COMMANDES GRADES ==========
+
+@bot.tree.command(name="rank", description="Promouvoir un joueur à un grade")
+@app_commands.describe(joueur="Le joueur à promouvoir", grade="Le nom du grade")
+async def rank(interaction: discord.Interaction, joueur: discord.Member, grade: str):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
+    announce_role = interaction.guild.get_role(CONFIG["ANNOUNCE_ROLE_ID"])
+    
+    embed = discord.Embed(
+        title="⭐ Nouvelle Promotion !",
+        description=f"Félicitations à {joueur.mention} qui vient d'être promu !",
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="👤 Joueur", value=joueur.mention, inline=True)
+    embed.add_field(name="🎖️ Nouveau Grade", value=grade, inline=True)
+    embed.add_field(name="👨‍💼 Promu par", value=interaction.user.mention, inline=True)
+    embed.set_thumbnail(url=joueur.display_avatar.url)
+    embed.set_footer(text="Bonne continuation dans tes nouvelles fonctions !")
+    
+    await interaction.response.send_message(
+        content=f"{announce_role.mention}",
+        embed=embed
+    )
+
+@bot.tree.command(name="derank", description="Rétrograder un joueur")
+@app_commands.describe(joueur="Le joueur à rétrograder")
+async def derank(interaction: discord.Interaction, joueur: discord.Member):
+    if not interaction.user.guild_permissions.moderate_members:
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    
+    announce_role = interaction.guild.get_role(CONFIG["ANNOUNCE_ROLE_ID"])
+    
+    embed = discord.Embed(
+        title="📉 Rétrogradation",
+        description=f"{joueur.mention} a été rétrogradé.",
+        color=discord.Color.red(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="👤 Joueur", value=joueur.mention, inline=True)
+    embed.add_field(name="👨‍💼 Rétrogradé par", value=interaction.user.mention, inline=True)
+    embed.set_thumbnail(url=joueur.display_avatar.url)
+    
+    await interaction.response.send_message(
+        content=f"{announce_role.mention}",
+        embed=embed
+    )
+
+# ========== COMMANDES INFORMATIONS ==========
+
+@bot.tree.command(name="botinfo", description="Informations sur le bot")
+async def botinfo(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🌙 LunaBot - Informations",
+        description="Bot de modération et gestion de tickets",
+        color=discord.Color.purple(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="👥 Serveurs", value=str(len(bot.guilds)), inline=True)
+    embed.add_field(name="📊 Membres", value=str(len(bot.users)), inline=True)
+    embed.add_field(name="🏓 Latence", value=f"{round(bot.latency * 1000)}ms", inline=True)
+    embed.add_field(name="⚠️ Warns actifs", value=str(len(warnings_db)), inline=True)
+    embed.add_field(name="🎫 Tickets ouverts", value=str(len(tickets_db)), inline=True)
+    embed.set_footer(text="Développé pour ton serveur")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="help", description="Liste des commandes disponibles")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="📚 Commandes de LunaBot",
+        color=discord.Color.blue()
+    )
+    
+    embed.add_field(
+        name="👥 Équipe",
+        value="`/teammessage` - Afficher l'embed\n"
+              "`/team add` - Ajouter un membre\n"
+              "`/team remove` - Retirer un membre",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🛡️ Modération",
+        value="`/warn` - Avertir un membre\n"
+              "`/warnings` - Voir les warns\n"
+              "`/clearwarns` - Effacer les warns\n"
+              "`/mute` - Rendre muet\n"
+              "`/unmute` - Retirer le mute\n"
+              "`/kick` - Expulser un membre\n"
+              "`/ban` - Bannir un membre\n"
+              "`/unban` - Débannir un utilisateur",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🎫 Tickets",
+        value="`/ticket-panel` - Créer le panel\n"
+              "`/rename` - Renommer le ticket\n"
+              "`/add` - Ajouter un membre\n"
+              "`/remove` - Retirer un membre\n"
+              "`/reserv-ticket` - Réserver aux ops",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🎖️ Grades",
+        value="`/rank` - Promouvoir un joueur\n"
+              "`/derank` - Rétrograder un joueur",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="ℹ️ Informations",
+        value="`/botinfo` - Infos sur le bot\n"
+              "`/help` - Cette commande\n"
+              "`/ping` - Latence du bot",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="ping", description="Vérifier la latence du bot")
+async def ping(interaction: discord.Interaction):
+    latency = round(bot.latency * 1000)
+    
+    if latency < 100:
+        color = discord.Color.green()
+        status = "Excellent"
+    elif latency < 200:
+        color = discord.Color.orange()
+        status = "Correct"
+    else:
+        color = discord.Color.red()
+        status = "Lent"
+    
+    embed = discord.Embed(
+        title="🏓 Pong !",
+        description=f"**Latence:** {latency}ms\n**Status:** {status}",
+        color=color
+    )
+    await interaction.response.send_message(embed=embed)
+
+# ========== ÉVÉNEMENTS ==========
+
+@bot.event
+async def on_ready():
+    print("=" * 50)
+    print(f"✅ {bot.user.name} est connecté !")
+    print(f"📊 ID: {bot.user.id}")
+    print(f"🌐 Serveurs: {len(bot.guilds)}")
+    print(f"👥 Utilisateurs: {len(bot.users)}")
+    print("=" * 50)
+    
     try:
-        await interaction.channel.edit(name=f"ticket-{nom}")
-        await interaction.response.send_message(f"✅ Ticket renommé en **ticket-{nom}**", ephemeral=True)
+        synced = await bot.tree.sync()
+        print(f"✅ {len(synced)} commandes synchronisées")
     except Exception as e:
-        await interaction.response.send_message(f"❌ Erreur lors du renommage : {e}", ephemeral=True)
+        print(f"❌ Erreur de synchronisation: {e}")
+    
+    bot.add_view(TicketView())
+    bot.add_view(TicketButton())
+    
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name="Luna Networks 🌙"
+        ),
+        status=discord.Status.online
+    )
+    print("✅ Bot prêt à l'utilisation !")
+    print("=" * 50)
 
-# ========== KEEP ALIVE SERVEUR FLASK (pour Render) ==========
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    print(f"❌ Erreur: {error}")
 
-app = Flask(__name__)
+# ========== GESTION DES ERREURS DE PERMISSIONS ==========
+
+@teammessage.error
+@team_add.error
+@team_remove.error
+async def team_permission_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message(
+            '❌ Tu n\'as pas la permission de bannir des membres pour utiliser cette commande !',
+            ephemeral=True
+        )
+
+# ========== SERVEUR FLASK POUR HÉBERGEUR ==========
+
+app = Flask('')
 
 @app.route('/')
 def home():
     return "✅ LunaBot est en ligne !"
 
-def run_web():
+def run():
     app.run(host='0.0.0.0', port=8080)
 
-def keep_alive():
-    thread = threading.Thread(target=run_web)
-    thread.start()
+threading.Thread(target=run).start()
 
-# ========== ÉVÈNEMENT DE DÉMARRAGE ==========
+print("🚀 Démarrage de LunaBot...")
 
-@bot.event
-async def on_ready():
-    print(f"✅ Connecté en tant que {bot.user}")
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not TOKEN:
+    print("❌ ERREUR : Token Discord non trouvé !")
+    print("⚠️  Ajoute une variable d'environnement DISCORD_TOKEN sur Render.com")
+else:
     try:
-        synced = await bot.tree.sync(guild=discord.Object(id=CONFIG["GUILD_ID"]))
-        print(f"🔁 {len(synced)} commandes synchronisées avec succès.")
+        bot.run(TOKEN)
     except Exception as e:
-        print(f"❌ Erreur lors de la synchronisation des commandes : {e}")
-
-# ========== LANCEMENT DU BOT ==========
-
-if __name__ == "__main__":
-    keep_alive()  # Garde le bot actif sur Render
-    TOKEN = os.getenv("DISCORD_TOKEN")  # Ton token doit être dans les variables d'environnement Render
-    bot.run(TOKEN)
+        print(f"❌ Erreur de démarrage: {e}")
