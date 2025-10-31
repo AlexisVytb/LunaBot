@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import os
 import threading
@@ -83,6 +83,7 @@ warnings_db = {}
 mutes_db = {}
 tickets_db = {}
 team_messages = {}
+ticket_counter = 0  # Compteur global pour les tickets
 
 # Créer l'embed de l'équipe
 def create_team_embed():
@@ -329,7 +330,7 @@ async def mute(interaction: discord.Interaction, membre: discord.Member, duree: 
         return
     
     try:
-        await membre.timeout(discord.utils.utcnow() + discord.timedelta(minutes=duree), reason=raison)
+        await membre.timeout(discord.utils.utcnow() + timedelta(minutes=duree), reason=raison)
         
         user_id = str(membre.id)
         mutes_db[user_id] = {
@@ -488,13 +489,14 @@ class TicketModal(discord.ui.Modal, title="Créer un Ticket"):
     )
     
     async def on_submit(self, interaction: discord.Interaction):
+        global ticket_counter
         await interaction.response.defer(ephemeral=True)
         
         guild = interaction.guild
         category = guild.get_channel(CONFIG["TICKET_CATEGORY_ID"])
         
-        ticket_number = len([c for c in category.channels if c.name.startswith("ticket-")]) + 1
-        channel_name = f"ticket-{ticket_number}"
+        ticket_counter += 1
+        channel_name = f"ticket-{str(ticket_counter).zfill(4)}"
         
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
@@ -520,7 +522,7 @@ class TicketModal(discord.ui.Modal, title="Créer un Ticket"):
         }
         
         embed = discord.Embed(
-            title=f"🎫 Ticket #{ticket_number}",
+            title=f"🎫 Ticket #{str(ticket_counter).zfill(4)}",
             description=f"Ticket créé par {interaction.user.mention}",
             color=discord.Color.blue(),
             timestamp=datetime.now()
@@ -853,7 +855,8 @@ async def help_command(interaction: discord.Interaction):
         name="ℹ️ Informations",
         value="`/botinfo` - Infos sur le bot\n"
               "`/help` - Cette commande\n"
-              "`/ping` - Latence du bot",
+              "`/ping` - Latence du bot\n"
+              "`/status` - Statut du serveur MC",
         inline=False
     )
     
