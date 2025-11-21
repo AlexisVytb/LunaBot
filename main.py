@@ -950,9 +950,9 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
     print("❌ ERREUR : Token Discord non trouvé !")
-    print("⚠️  Ajoute une variable d'environnement DISCORD_TOKEN sur Render.com")
 else:
     try:
         bot.run(TOKEN)
     except Exception as e:
         print(f"❌ Erreur de démarrage: {e}")
+
